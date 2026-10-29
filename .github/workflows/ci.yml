@@ -29,6 +29,8 @@ jobs:
         run: ruff check app tests
 
       - name: Run tests
+        env:
+          PYTHONPATH: .
         run: pytest -q
 
       - name: Verify intentional failure gate
@@ -48,3 +50,5 @@ jobs:
 
       - name: Build Docker image
         run: docker build --tag apex-operations-api:${{ github.sha }} .
+
+
