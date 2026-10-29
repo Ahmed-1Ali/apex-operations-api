@@ -1,0 +1,50 @@
+﻿name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install dependencies
+        run: python -m pip install -r requirements.txt
+
+      - name: Lint
+        run: ruff check app tests
+
+      - name: Run tests
+        run: pytest -q
+
+      - name: Verify intentional failure gate
+        shell: bash
+        run: |
+          if DEMO_FORCE_TEST_FAILURE=1 pytest -q tests/test_api.py::test_ci_failure_gate_opt_in; then
+            echo "ERROR: The intentional failure test unexpectedly passed."
+            exit 1
+          else
+            echo "PASS: The intentional failure was detected."
+          fi
+
+      - name: Audit dependencies
+        run: |
+          python -m pip install pip-audit
+          pip-audit -r requirements.txt
+
+      - name: Build Docker image
+        run: docker build --tag apex-operations-api:${{ github.sha }} .

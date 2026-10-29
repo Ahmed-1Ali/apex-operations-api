@@ -1,0 +1,314 @@
+APEX OPERATIONS API - FINAL REVIEW
+
+========== .github\workflows\ci.yml ==========
+name: CI
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+      - name: Lint
+        run: ruff check --select F app tests
+      - name: Tests
+        run: pytest -q
+      - name: Build container
+        run: docker build --tag apex-operations-api:${{ github.sha }} .
+      - name: Audit dependencies
+        run: |
+          pip install pip-audit
+          pip-audit -r requirements.txt
+
+========== README.md ==========
+# Apex Operations API — Junior DevOps Assessment
+
+Small local DevOps demonstration: FastAPI, Docker, Compose, GitHub Actions CI, tests, health/readiness, Prometheus metrics, failure investigation and rollback instructions.
+
+> **Evidence honesty:** these files are a project scaffold. Do not claim CI, deployment, tests or rollback succeeded until you run them and capture your own output/screenshots.
+
+## Architecture
+```mermaid
+flowchart LR
+  Dev[Commit / Pull Request] --> CI[GitHub Actions]
+  CI --> L[Lint] --> T[Pytest] --> B[Docker build] --> S[Dependency audit]
+  User[Local user] --> Compose[Docker Compose] --> API[FastAPI non-root container]
+  API --> H[/health and /ready]
+  API --> M[/metrics]
+  API --> O[/api/v1/operations]
+  API --> Logs[Container logs]
+```
+
+## Quick start
+Requirements: Docker Desktop/Engine with Compose v2; Python 3.12+ for local tests.
+```bash
+cp .env.example .env
+docker compose up --build -d
+docker compose ps
+curl -fsS http://127.0.0.1:8000/health
+curl -fsS http://127.0.0.1:8000/ready
+curl -fsS http://127.0.0.1:8000/api/v1/operations
+curl -fsS http://127.0.0.1:8000/metrics
+```
+OpenAPI docs: http://127.0.0.1:8000/docs. Stop with `docker compose down`.
+
+## Test and lint
+```bash
+python -m venv .venv
+# Windows PowerShell: .venv\Scripts\Activate.ps1
+# Linux/macOS: source .venv/bin/activate
+pip install -r requirements.txt
+ruff check app tests
+pytest -q
+```
+There are nine automated checks. The intentional CI-gate check passes normally but can be made to fail on demand:
+```bash
+# Expected to exit non-zero; this is intentional
+./scripts/test-intentional-failure.sh
+```
+PowerShell alternative:
+```powershell
+$env:DEMO_FORCE_TEST_FAILURE = "1"
+pytest -q tests/test_api.py::test_ci_failure_gate_opt_in
+Remove-Item Env:DEMO_FORCE_TEST_FAILURE
+```
+Unset the flag before normal testing. A failed lint/test step blocks the later image build in the CI workflow.
+
+## Release and rollback
+```bash
+APP_VERSION=1.0.1 docker compose build api
+APP_VERSION=1.0.1 docker compose up -d --no-build api
+curl -fsS http://127.0.0.1:8000/
+./scripts/rollback.sh 1.0.0
+curl -fsS http://127.0.0.1:8000/
+```
+Rollback only uses an already-built local tag. For real releases use immutable commit-SHA tags and a registry.
+
+## Observability and incident exercise
+- Logs: `docker compose logs --since=10m api`
+- Health: `docker compose ps`
+- Metrics: `curl -fsS http://127.0.0.1:8000/metrics`
+- Inject demo failure: `curl -i http://127.0.0.1:8000/api/v1/debug/failure` (intentional HTTP 500), then inspect logs and practice rollback.
+
+Proposed alerts (not deployed): service unavailable for 1 minute; HTTP 5xx rate above 5% for 5 minutes; p95 latency above 500 ms for 5 minutes; container unhealthy for two checks.
+
+## Security
+Non-root runtime; read-only root filesystem; dropped Linux capabilities; no-new-privileges; host port bound to loopback. No credentials are needed. `.env` is gitignored. For real environments use a secret manager, least-privilege identities, dependency audits and image scanning (Trivy/Grype). Synthetic data only; no production access or paid cloud resources.
+
+## File map
+`app/main.py`, `Dockerfile`, `compose.yaml`, `.github/workflows/ci.yml`, `tests/test_api.py`, `scripts/rollback.sh`, `scripts/test-intentional-failure.sh`, `docs/RUNBOOK.md`, `docs/DECISION-MEMO.md`.
+
+## AI-use disclosure — verify and retain
+AI assistance was used to draft the initial application, container configuration, CI workflow, tests, scripts, README, runbook and decision memo. I will review the implementation, personally execute the tests/deployment/failure/rollback exercises, and submit evidence of actual results. Update this statement to match the assistance actually used.
+
+========== docs\RUNBOOK.md ==========
+# Operations Runbook
+
+## Deploy
+1. Install Docker Desktop/Engine and Compose v2.
+2. Optional: copy `.env.example` to `.env`.
+3. Run `docker compose up --build -d`.
+4. Check `/health`, `/ready`, `/api/v1/operations` at `http://127.0.0.1:8000`.
+5. Inspect with `docker compose ps` and `docker compose logs --tail=100 api`.
+
+## Release and rollback
+Build a new version with `APP_VERSION=1.0.1 docker compose build api`, then deploy it with `APP_VERSION=1.0.1 docker compose up -d --no-build api`. Roll back to a previously built image using `./scripts/rollback.sh 1.0.0`. Verify health endpoints and API output. Rollback deliberately does not build or pull images; the known-good tag must already exist.
+
+## Incident: HTTP 500
+Reproduce using `curl -i http://127.0.0.1:8000/api/v1/debug/failure`, inspect `docker compose logs --since=10m api`, inspect health with `docker compose ps`, correlate route/status in logs, then roll back if related to a release and recheck health. Record timeline, impact, root cause and follow-up. The debug failure endpoint is assessment-only and must be removed or gated before production.
+
+## Troubleshooting
+- Port occupied: set `API_PORT=8001` in `.env` and recreate the service.
+- Container exits: inspect `docker compose logs api`.
+- Health fails: check `/health`, container status and startup logs.
+- CI fails: reproduce using `pip install -r requirements.txt`, `ruff check app tests`, `pytest -q`, and `docker build -t apex-operations-api:local .`.
+- Missing rollback image: build or pull the known-good tag before rollback; never build an unknown candidate as a rollback.
+
+## Security
+Run non-root; use read-only root filesystem, drop capabilities, no-new-privileges and loopback-only port binding. No secrets are required; `.env` is gitignored. In real systems use CI secret stores/cloud secret managers and least-privilege IAM. Audit dependencies and scan images (e.g. Trivy/Grype) before production.
+
+========== docs\DECISION-MEMO.md ==========
+# Decision Memo
+
+## Assumptions
+The goal is a small reproducible local API. It uses synthetic in-memory data, no customer information, external services, cloud deployment or paid resources. A database is omitted because the demo is read-only and static; add one if persistence becomes a real requirement.
+
+## Decisions and trade-offs
+FastAPI provides a minimal API and OpenAPI docs. The multi-stage image keeps build tooling out of the runtime; the process runs non-root. Compose enables read-only filesystem, dropped capabilities, no-new-privileges and loopback binding. GitHub Actions performs lint, tests, image build and dependency audit; failed earlier steps block later steps. Version tags and a rollback script demonstrate the intended workflow, while real releases should use immutable commit-SHA tags in a registry.
+
+Prometheus metrics are exposed at `/metrics`; logs include structured key/value fields. Production improvements would include a dedicated JSON logger, centralized log aggregation, dashboards, alert manager, image scanning, SBOM/signing, staging smoke tests and protected deployment approvals.
+
+## Limitations
+The intentional 500 endpoint is for assessment only and must be removed/gated before production. No actual alert backend is provisioned; proposed alerts are API unavailable for 1 minute, 5xx rate above 5% for 5 minutes, p95 latency above 500 ms for 5 minutes, and unhealthy container for two checks. Review dependency audit results instead of assuming they are clean.
+
+========== Dockerfile ==========
+FROM python:3.12-slim AS builder
+ENV PIP_DISABLE_PIP_VERSION_CHECK=1 PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1
+WORKDIR /build
+COPY requirements.txt .
+RUN python -m venv /opt/venv && /opt/venv/bin/pip install --no-cache-dir -r requirements.txt
+FROM python:3.12-slim AS runtime
+ENV PATH="/opt/venv/bin:$PATH" PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 APP_VERSION=1.0.0
+RUN groupadd --system app && useradd --system --gid app --home-dir /app app
+WORKDIR /app
+COPY --from=builder /opt/venv /opt/venv
+COPY --chown=app:app app ./app
+USER app
+EXPOSE 8000
+HEALTHCHECK --interval=20s --timeout=3s --start-period=5s --retries=3 CMD python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=2)" || exit 1
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+
+========== compose.yaml ==========
+services:
+  api:
+    image: apex-operations-api:${APP_VERSION:-1.0.0}
+    build: {context: ., dockerfile: Dockerfile}
+    environment:
+      APP_VERSION: ${APP_VERSION:-1.0.0}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+    ports: ["127.0.0.1:${API_PORT:-8000}:8000"]
+    read_only: true
+    tmpfs:
+      - /tmp:size=16m,noexec,nosuid
+    security_opt: [no-new-privileges:true]
+    cap_drop: [ALL]
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/ready', timeout=2)"]
+      interval: 20s
+      timeout: 3s
+      retries: 3
+      start_period: 5s
+
+========== .dockerignore ==========
+.git
+.github
+.venv
+__pycache__
+.pytest_cache
+.ruff_cache
+*.py[cod]
+.env
+.env.*
+tests
+docs
+
+========== .gitignore ==========
+.env
+.venv/
+__pycache__/
+.pytest_cache/
+.ruff_cache/
+
+========== .env.example ==========
+APP_VERSION=1.0.0
+API_PORT=8000
+LOG_LEVEL=INFO
+
+========== requirements.txt ==========
+fastapi==0.115.12
+uvicorn[standard]==0.34.0
+prometheus-client==0.21.1
+httpx==0.28.1
+pytest==8.3.5
+ruff==0.11.2
+
+========== tests\test_api.py ==========
+
+import os
+
+import pytest
+from fastapi.testclient import TestClient
+
+from app.main import app
+
+
+@pytest.fixture
+def client():
+    with TestClient(app) as test_client:
+        yield test_client
+
+
+def test_root(client):
+    response = client.get("/")
+    assert response.status_code == 200
+    assert response.json()["service"] == "apex-operations-api"
+
+
+def test_health(client):
+    response = client.get("/health")
+    assert response.status_code == 200
+    assert response.json() == {"status": "healthy"}
+
+
+def test_readiness(client):
+    response = client.get("/ready")
+    assert response.status_code == 200
+    assert response.json()["status"] == "ready"
+
+
+def test_list_operations(client):
+    response = client.get("/api/v1/operations")
+    assert response.status_code == 200
+    assert response.json()["count"] == 2
+
+
+def test_known_operation(client):
+    response = client.get("/api/v1/operations/op-001")
+    assert response.status_code == 200
+    assert response.json()["status"] == "succeeded"
+
+
+def test_unknown_operation_404(client):
+    response = client.get("/api/v1/operations/nope")
+    assert response.status_code == 404
+    assert response.json()["detail"] == "operation_not_found"
+
+
+def test_metrics(client):
+    response = client.get("/metrics")
+    assert response.status_code == 200
+    assert "apex_http_requests_total" in response.text
+
+
+def test_demo_failure(client):
+    response = client.get("/api/v1/debug/failure")
+    assert response.status_code == 500
+    assert response.json()["detail"] == "intentional_demo_failure"
+
+
+def test_ci_failure_gate_opt_in():
+    if os.getenv("DEMO_FORCE_TEST_FAILURE") == "1":
+        pytest.fail("intentional failure: CI must block release")
+
+========== scripts\rollback.sh ==========
+#!/usr/bin/env sh
+set -eu
+if [ "$#" -ne 1 ]; then echo "Usage: $0 <known-good-version>" >&2; exit 2; fi
+export APP_VERSION="$1"
+docker compose up -d --no-build --pull never api
+docker compose ps
+echo "Rollback requested to prebuilt image version: $APP_VERSION"
+
+========== scripts\test-intentional-failure.sh ==========
+#!/usr/bin/env sh
+set -eu
+echo "Expected result: this command fails to demonstrate the CI gate."
+DEMO_FORCE_TEST_FAILURE=1 pytest -q tests/test_api.py::test_ci_failure_gate_opt_in
+
+========== GIT STATUS ==========
+fatal: not a git repository (or any of the parent directories): .git
+
+========== GIT VERSION ==========
+git version 2.51.2.windows.1

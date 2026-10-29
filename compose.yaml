@@ -1,0 +1,20 @@
+services:
+  api:
+    image: apex-operations-api:${APP_VERSION:-1.0.0}
+    build: {context: ., dockerfile: Dockerfile}
+    environment:
+      APP_VERSION: ${APP_VERSION:-1.0.0}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+    ports: ["127.0.0.1:${API_PORT:-8000}:8000"]
+    read_only: true
+    tmpfs:
+      - /tmp:size=16m,noexec,nosuid
+    security_opt: [no-new-privileges:true]
+    cap_drop: [ALL]
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/ready', timeout=2)"]
+      interval: 20s
+      timeout: 3s
+      retries: 3
+      start_period: 5s
